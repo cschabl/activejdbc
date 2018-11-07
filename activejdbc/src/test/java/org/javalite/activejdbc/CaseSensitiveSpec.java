@@ -15,8 +15,18 @@ public class CaseSensitiveSpec extends ActiveJDBCTest {
     public void should_pass_with_quotes_spaces_and_CamelCase() {
         if(url().contains("postgresql") || url().contains("h2")){ // ATTENTION, this is testing only H2 and PostgreSQL
             WildAnimal wildAnimal = new WildAnimal();
-            wildAnimal.set("\"Name\"", "Cheetah").saveIt();
+            wildAnimal.set("\"Name\"", "Cheetah");
+            wildAnimal.saveIt();
             a(WildAnimal.count()).shouldBeEqual(1);
+
+            WildAnimal animal = WildAnimal.findById(wildAnimal.getId());
+            animal.set("\"Name\"", "Lion");
+            animal.saveIt();
+
+            animal = WildAnimal.findById(wildAnimal.getId());
+            the(animal.get("\"Name\"")).shouldBeEqual("Lion");
         }
     }
+
+
 }

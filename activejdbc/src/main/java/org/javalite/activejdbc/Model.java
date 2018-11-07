@@ -47,6 +47,7 @@ import java.sql.Timestamp;
 import java.text.DateFormat;
 import java.util.*;
 import java.util.Map.Entry;
+import java.util.stream.Collectors;
 
 import static org.javalite.activejdbc.ModelDelegate.metaModelFor;
 import static org.javalite.activejdbc.ModelDelegate.metaModelOf;
@@ -377,7 +378,7 @@ public abstract class Model extends CallbackSupport implements Externalizable {
         metaModelLocal.checkAttribute(attributeName);
 
         if (willAttributeModifyModel(attributeName, value)) {
-            attributes.put(attributeName, value);
+            attributes.put(normalizeAttributeName(attributeName), value);
             dirtyAttributeNames.add(attributeName);
         }
         return (T) this;
@@ -1436,7 +1437,7 @@ public abstract class Model extends CallbackSupport implements Externalizable {
         }
 
         if (metaModelLocal.hasAttribute(attributeName)) {
-            Object value = attributes.get(attributeName);
+            Object value = attributes.get(normalizeAttributeName(attributeName));
             Converter<Object, Object> converter = modelRegistryLocal().converterForValue(attributeName, value, Object.class);
             return converter != null ? converter.convert(value) : value;
         } else {
@@ -1460,6 +1461,15 @@ public abstract class Model extends CallbackSupport implements Externalizable {
             }
         }
         return null;
+    }
+
+    private String normalizeAttributeName(String attributeName)
+    {
+        // TODO: if-condition duplicated in Metal.hasAttribute(). Move to MetaModel?
+        if(attributeName.startsWith("\"") && attributeName.endsWith("\"")) {
+            return attributeName.substring(1, attributeName.length() - 1);
+        }
+        return attributeName;
     }
 
     /**
@@ -2802,12 +2812,18 @@ public abstract class Model extends CallbackSupport implements Externalizable {
         MetaModel metaModel = metaModelLocal;
         List<String> columns = new ArrayList<>();
         List<Object> values = new ArrayList<>();
-        for (Map.Entry<String, Object> entry : attributes.entrySet()) {
-            if (entry.getValue() != null && !metaModel.getVersionColumn().equals(entry.getKey())) {
-                columns.add(entry.getKey());
-                values.add(entry.getValue());
+
+        for (String attribute : dirtyAttributeNames)
+        {
+            String normalizedAttribute = normalizeAttributeName(attribute);
+            Object value = attributes.get(normalizedAttribute);
+
+            if (value != null && !metaModel.getVersionColumn().equals(normalizedAttribute)) {
+                columns.add(attribute);
+                values.add(value);
             }
         }
+
         if (metaModel.isVersioned()) {
             columns.add(metaModel.getVersionColumn());
             values.add(1);
@@ -2848,12 +2864,14 @@ public abstract class Model extends CallbackSupport implements Externalizable {
     private void doCreatedAt() {
         if (manageTime && metaModelLocal.hasAttribute("created_at")) {
             attributes.put("created_at", new Timestamp(System.currentTimeMillis()));
+            dirtyAttributeNames.add("created_at");
         }
     }
 
     private void doUpdatedAt() {
         if (manageTime && metaModelLocal.hasAttribute("updated_at")) {
             attributes.put("updated_at", new Timestamp(System.currentTimeMillis()));
+            dirtyAttributeNames.add("updated_at");
         }
     }
 
@@ -2865,13 +2883,15 @@ public abstract class Model extends CallbackSupport implements Externalizable {
         MetaModel metaModel = metaModelLocal;
         StringBuilder query = new StringBuilder().append("UPDATE ").append(metaModel.getTableName()).append(" SET ");
         Set<String> attributeNames = metaModel.getAttributeNamesSkipGenerated(manageTime);
-        attributeNames.retainAll(dirtyAttributeNames);
-        if(attributeNames.size() > 0) {
-            join(query, attributeNames, " = ?, ");
+        Set<String> validDirtyAttributeNames = dirtyAttributeNames.stream()
+            .filter(a -> attributeNames.contains(normalizeAttributeName(a))).collect(Collectors.toSet());
+
+        if(validDirtyAttributeNames.size() > 0) {
+            join(query, validDirtyAttributeNames, " = ?, ");
             query.append(" = ?");
         }
 
-        List<Object> values = getAttributeValues(attributeNames);
+        List<Object> values = getAttributeValues(validDirtyAttributeNames);
 
         if (manageTime && metaModel.hasAttribute("updated_at")) {
             if(values.size() > 0)
